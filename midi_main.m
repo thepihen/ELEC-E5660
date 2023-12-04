@@ -45,12 +45,12 @@ deviceWriter = audioDeviceWriter('SampleRate',44100, ...
 % asiosettings(deviceWriter.Device);
 deviceWriter.BufferSize = 256;
 if playFromMIDI
-    simplesynthOptionalMIDI(deviceWriter, aa_lpc_coeffs, Fs, true, selectedDevice);
+    simplesynthOptionalMIDI(deviceWriter, oo_lpc_coeffs, Fs, true, selectedDevice);
 else
     simplesynthOptionalMIDI(deviceWriter, aa_lpc_coeffs, Fs, false, "none");
 end
 
-function simplesynthOptionalMIDI(deviceWriter,a_lpc, Fs, playingFromMidiFlag, selectedDevice)
+function simplesynthOptionalMIDI(deviceWriter,aa_lpc, Fs, playingFromMidiFlag, selectedDevice)
 if(selectedDevice~="none")
     midiInput = mididevice(selectedDevice);
 end
@@ -97,6 +97,9 @@ envelope = env_AD;
 currTime = 1;
 
 isPlayingNote = false;
+reverb = reverberator;
+lpcOrder = 100;
+a_lpc = aa_lpc(1:lpcOrder, :, lpcOrder-9); %-9 because of course indexing starts at 1
 while true
 
     if (playingFromMidiFlag)
@@ -143,6 +146,11 @@ while true
                     end
                 case midimsgtype.ControlChange
                     switch msg.CCNumber
+                        case 14
+                            lpcOrder = round((msg.CCValue/127) *(size(aa_lpc,3) - 1))+10;
+                            disp(lpcOrder)
+                        case 15
+                            reverb.WetDryMix = msg.CCValue/127;
                         case 18
                             %let's set a maximum of 5 seconds, and a
                             %minimum of 10 milliseconds
@@ -151,7 +159,7 @@ while true
                         case 19
                             disp("decay chaged")
                             %same here
-                            env_ds = (msg.CCValue/127 * 4.99) +0.01;
+                            env_ds = (msg.CCValue/127 * 0.49) +0.01;
                         case 20
                             %this only changes the sustain level
                             env_sLev = (msg.CCValue/127);%from 0 to 1
@@ -180,7 +188,7 @@ while true
     if(freq~=prevFreq)
         currTime = 1;
         lpcInd = matchClosestLPCCoeff(currNote);
-        a = a_lpc(:,lpcInd);
+        a = aa_lpc(1:lpcOrder, lpcInd, lpcOrder-9);
         % input = zeros(ll,1);
         n = 0:ll-1;
         n = n';
@@ -227,7 +235,7 @@ while true
     %     sblock2 = sblock.*hamming(length(sblock), 'periodic');
     %     sblock(1:length(sblock)/2, :) = sblock2(1:length(sblock2)/2, :);
     % end
-    disp(currTime+ " / " + times);
+    % disp(currTime+ " / " + times); %DEBUG
     if(currTime <= times )
         if(currTime == times )
             %remainder
@@ -239,14 +247,12 @@ while true
         %the envelope will be incomplete
         coveredEnv = ones(size(coveredEnv))*env_sLev*isPlayingNote;
     end
-    disp(coveredEnv(10));
-    disp(env_s)
     sblock = sblock.*coveredEnv*amp;
     currTime = currTime +1;
 
 
     block = circshift(block, -length(sblock));
-    deviceWriter([sblock, sblock]);
+    deviceWriter(reverb([sblock, sblock]));
     currBlock = currBlock + 1;
     % block = circshift(block, -N);
     % disp(currTime + " / "+times);
@@ -307,111 +313,8 @@ end
 
 
 
-%https://www.music.mcgill.ca/~gary/307/week5/node14.html
-%https://ccrma.stanford.edu/~jos/SpecEnv/LPC_Envelope_Example_Speech.html
-function simplesynth(midiDeviceName, deviceWriter,a_lpc, Fs)
-midiInput = mididevice(midiDeviceName);
-deviceWriter.SupportVariableSizeInput = true;
-a = a_lpc(:,40);
-amp = 0.6;
-freq = 0;
-prevFreq = -1;
-remainder = zeros(deviceWriter.BufferSize,1);
-N = deviceWriter.BufferSize;
-h = deviceWriter.BufferSize/2;
-while true
-    msgs = midireceive(midiInput);
-    for i = 1:numel(msgs)
-        msg = msgs(i);
-        if isNoteOn(msg)
-            freq = note2freq(msg.Note);
-            amp = msg.Velocity/127;
-        elseif isNoteOff(msg)
-            if msg.Note == msg.Note
-                amp = 0;
-            end
-        end
-    end
-    if(freq~=prevFreq)
-        ll = 4096;
-        input = zeros(ll,1);
-        n = 0:ll-1;
-        n = n';
-        w0T = 2*pi*freq/Fs;
-        pitch = (Fs/freq);
-        disp(pitch);
-        P = pitch;
-        M = 2*floor(P/2) + 1;
-        % input = (M/P)*sincM((M/P * w0T)*n, M);
-
-
-        input = (M/P)*sin(pi* M*n/P)./(M*sin(pi*n/P));
-        %This is not enough yet. If you feed this as input it will not work as
-        %there are still many peaks due to zeros in the denominator.
-        %We will set all those values to one
-        input(mod(n,P)==0) = 1; %this is a certified cantinaro moment though
-        input(1) = 1;
-        input(isnan(input)) = 1;
-
-        % t = 0:1/Fs:(512-1)/Fs;
-        % T = Fs/freq;
-        % % Compute the BLIT signal
-        % N = length(length(a));
-        % blit = sinc(t / T) .* sum(sinc((-N:N) / T), 2);
-
-        % Normalize the signal
-        % blit = blit / max(abs(blit));
-        % input = blit';
-
-
-        % input = (M/P)*sincM((M/P)*n, M);
-        % w0T = 2*pi*freq/Fs;
-        % nharm = floor((Fs/2)/freq); % number of harmonics
-        % sig = zeros(1,512);
-        % % Synthesize bandlimited impulse train
-        % for i=1:nharm
-        %     sig = sig + cos(i*w0T*n);
-        % end
-        % input = sig;
-        % input = input.*hamming(size(input,1));
-        %input(1:pitch:end) = 1;
-        block = filter(1,[1; -a], input);
-        block = block/max(abs(block)) * amp;
-        %we must window to reduce unwanted artifacts (due to a implicit
-        %boxcar windowing)
-        % block = block .* hann(length(block));
-        % blockNew = circshift(block, -length(block)/2);
-        % block = block+blockNew;
-
-        %another idea here would be to take into account how long the block
-        %is, how long the buffer is and take the difference as hop
-
-        % block = block(1:512).*hamming(512);
-    end
-    %some OLA magic is needed here now
-    % block2 = block(1:N);
-    % block2 = block2 .* hann(N);
-    % block2 = block2+remainder;
-    % remainder= block(1+h:N+h).*hann(N);
-    % block2(1+h:N) = block2(1+h:N)+remainder(1:N-h);
-    % remainder(1:h) = remainder(N-h+1:end);
-    % remainder(h+1:end) = 0;
-
-    % block = block.*hamming(size(block,1));
-    deviceWriter([block(1:N), block(1:N)]);
-    block = circshift(block, -N);
-end
-end
-
-
 %% TODOS
 %-if you are moving from one note to the next (noteOff after a noteOn) then
 %the pitch should "slide" to the new one (using the blockTransition
 %function)
 %
-%-make the script work for any buffer size, always keeping 256-samples
-%sub-buffers you will use to build larger ones
-%
-%-move to midi
-%
-%-midi noteOn, noteOff detection, and maybe CC controls
