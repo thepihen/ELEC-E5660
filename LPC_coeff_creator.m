@@ -7,7 +7,7 @@ close all
 %<vowel>_##.wav , where <vowel> is aa, oo or uu, and ## corresponds to the midi note
 
 Fs = 44100; %just in case
-p = 10;
+p = 100;
 w = 4096;
 h = 2048;
 win = hann(w);
