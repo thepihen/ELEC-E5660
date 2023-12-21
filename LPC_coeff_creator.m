@@ -1,21 +1,26 @@
+% LPC Coefficient Creator
+% This script is used to create the LPC coefficients tables used by the
+% synthesizer. It must be run before running the synthesizer if the tables
+% are not already available
+
 clc
 clearvars
 close all
-%%
+%% setup
 %go in directory "samples". There are 3 subdirectories "aa", "oo", "uu"
 %each of them contains samples with a name in the following format:
 %<vowel>_##.wav , where <vowel> is aa, oo or uu, and ## corresponds to the midi note
 
 Fs = 44100; %just in case
-highestP = 100;
+highestP = 100; %highest order, lowest is always 10
 w = 4096;
-h = 2048;
-win = hann(w);
+% h = 2048; %not actually used since it doesn't cycle through the file
+% win = hann(w);
 
 aa_lpc_coeffs = zeros(highestP, 7, highestP-10);%it always starts from order 10
 oo_lpc_coeffs = zeros(highestP, 7, highestP-10);
 uu_lpc_coeffs = zeros(highestP, 7, highestP-10); 
-
+%% fill the coefficient tables
 %open the directory
 dirinfo = dir('samples');
 %cycle through the subdirectories
@@ -28,8 +33,6 @@ for p=10:highestP
             [frame, Fs] = audioread(['samples/' dirinfo(i).name '/' subdirinfo(j).name]);
             %extract a frame from the middle of the file
             frame = frame(floor(length(frame)/2)-floor(w/2):floor(length(frame)/2)+floor(w/2)-1, 1);
-            %apply the window
-            % frame = frame.*win;
             [r,rlags] = xcorr(frame, frame, 'coeff');
             % consider correlation only for positive lags, including 0
             rpos = r(rlags >=0);
@@ -47,7 +50,7 @@ for p=10:highestP
         end
     end
 end
-%%
+%% save coefficients tables
 save("aa_lpc_coeffs", 'aa_lpc_coeffs');
 save("oo_lpc_coeffs", 'oo_lpc_coeffs');
 save("uu_lpc_coeffs", 'uu_lpc_coeffs');
@@ -55,7 +58,7 @@ save("uu_lpc_coeffs", 'uu_lpc_coeffs');
 %if you want to test
 % freq = 220;
 % a = uu_lpc_coeffs(:,3);
-% imp = zeros(200000, 1);
+% imp = zeros(88200, 1);
 % pitch = Fs/freq;
 % imp(1:pitch:end) = 1;
 % out = filter(1, [1; -a ], imp);
